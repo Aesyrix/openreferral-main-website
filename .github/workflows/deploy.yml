@@ -34,10 +34,8 @@ jobs:
       - name: Build Assets
         run: npm run build
 
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      - name: Install sshpass
+        run: sudo apt-get install -y sshpass
 
       - name: Add host to known_hosts
         run: |
@@ -49,10 +47,11 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USERNAME }}
+          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           rsync -avz --delete \
-            -e "ssh -p $SSH_PORT" \
+            -e "sshpass -p $SSH_PASS ssh -p $SSH_PORT -o StrictHostKeyChecking=no" \
             --exclude '.git' \
             --exclude 'node_modules' \
             --exclude '.env' \
@@ -68,25 +67,20 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USERNAME }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          SSH_PASS: ${{ secrets.SSH_PASSWORD }}
         run: |
-          ssh -p $SSH_PORT $SSH_USER@$SSH_HOST << 'ENDSSH'
+          sshpass -p "$SSH_PASS" ssh -p $SSH_PORT -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST << 'ENDSSH'
             cd /home/u867057961/motivatedhomeleads.com
 
-            # Install production dependencies
             composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
-            # Cache clear
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
 
-            # Run migrations (safe)
             php artisan migrate --force
 
-            # Fix permissions
             chmod -R 775 storage bootstrap/cache
-            chown -R u867057961:u867057961 storage bootstrap/cache
 
-            echo "✅ Deployment complete!"
+            echo "Deployment complete!"
           ENDSSH
