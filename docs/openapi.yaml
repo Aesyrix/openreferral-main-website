@@ -1,0 +1,852 @@
+openapi: 3.0.3
+info:
+  title: Open Referral — Mobile Agent API
+  description: |
+    The API consumed by the Open Referral Flutter agent app, implemented to
+    `BACKEND_GUIDE.md` §6.
+
+    **Conventions**
+    - JSON everywhere, `snake_case` keys, ISO-8601 UTC timestamps.
+    - Auth via `Authorization: Bearer <sanctum token>`.
+    - Errors: `{ "message": "...", "errors": { "field": ["..."] } }` (422 for validation).
+    - Pagination: `{ "data": [...], "meta": { "page", "per_page", "total", "last_page" } }`.
+    - Budgets (`price_min` / `price_max`) are whole dollars; `lead_fee_cents` is cents.
+
+    **Account states.** Agents sign up as `pending`. A pending agent can log in
+    and read `/me`, but every `/leads` endpoint answers
+    `403 { "code": "account_not_active", "status": "pending" }` until staff
+    approve them. Suspended and rejected agents cannot log in at all.
+  version: 2.0.0
+servers:
+  - url: https://openreferral.us/api
+    description: Production
+  - url: http://localhost/openreferral/public/api
+    description: Local (XAMPP)
+  - url: http://127.0.0.1:8000/api
+    description: Local (artisan serve)
+
+tags:
+  - name: Auth
+    description: OTP signup, login, and password reset
+  - name: Profile
+    description: The agent's own profile, avatar, password, and settings
+  - name: Leads
+    description: Assigned leads, stats, analytics, and accept/reject
+  - name: Notifications
+    description: In-app list, read state, and FCM device registration
+  - name: Content
+    description: Editable About / Privacy / Terms / Help copy
+
+paths:
+  # ------------------------------------------------------------------ Auth
+  /auth/register/start:
+    post:
+      tags: [Auth]
+      summary: Request a signup code
+      description: Emails a 6-digit OTP. Rate limited to 5 per email per 10 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, example: new.agent@example.com }
+      responses:
+        '200':
+          description: Code emailed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  email: { type: string }
+                  resend_in: { type: integer, example: 45, description: Seconds before another code can be requested }
+                  expires_in: { type: integer, example: 600 }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/register/verify:
+    post:
+      tags: [Auth]
+      summary: Verify the signup code
+      description: Returns a single-use `verification_token`, valid 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: '482913' }
+      responses:
+        '200':
+          description: Verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  verification_token: { type: string }
+                  expires_in: { type: integer, example: 900 }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/register/complete:
+    post:
+      tags: [Auth]
+      summary: Create the agent account
+      description: |
+        Creates the agent with `status=pending`, returns an auth token, and
+        notifies every staff member and admin (event #1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, verification_token, password, name]
+              properties:
+                email: { type: string, format: email }
+                verification_token: { type: string }
+                password: { type: string, minLength: 8 }
+                name: { type: string, maxLength: 120 }
+                phone: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  token: { type: string }
+                  agent: { $ref: '#/components/schemas/Agent' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: Optionally registers the FCM device token in the same call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                device_token: { type: string, nullable: true }
+                platform: { type: string, enum: [android, ios, web], nullable: true }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  agent: { $ref: '#/components/schemas/Agent' }
+        '403': { $ref: '#/components/responses/AccountNotActive' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/password/forgot:
+    post:
+      tags: [Auth]
+      summary: Request a password reset code
+      description: Always answers 200 — it never reveals whether the email exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Code emailed if the address is registered
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/password/verify:
+    post:
+      tags: [Auth]
+      summary: Verify the reset code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: '482913' }
+      responses:
+        '200':
+          description: Verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  reset_token: { type: string }
+                  expires_in: { type: integer }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/password/reset:
+    post:
+      tags: [Auth]
+      summary: Set a new password
+      description: Signs out every existing session and device on success.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, reset_token, password]
+              properties:
+                email: { type: string, format: email }
+                reset_token: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200': { description: Password updated }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device_token: { type: string, nullable: true, description: Unregisters this push token too }
+      responses:
+        '200': { description: Signed out }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  # --------------------------------------------------------------- Profile
+  /me:
+    get:
+      tags: [Profile]
+      summary: Current agent profile
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Agent' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    put:
+      tags: [Profile]
+      summary: Update profile
+      description: '`email` is read-only after signup. `service_areas` replaces the whole set.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 120 }
+                phone: { type: string, nullable: true }
+                service_areas:
+                  type: array
+                  items: { type: string }
+                  example: ['Miami, FL', 'Miami Beach, FL']
+                license_number: { type: string, nullable: true }
+                license_state: { type: string, nullable: true }
+                brokerage: { type: string, nullable: true }
+                bio: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Agent' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Profile]
+      summary: Delete the account
+      description: Soft-deletes the agent, revokes tokens and devices, and returns their open leads to the pool.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Account deleted }
+
+  /me/avatar:
+    post:
+      tags: [Profile]
+      summary: Upload an avatar
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar: { type: string, format: binary, description: 'jpg/jpeg/png/webp, max 5 MB' }
+      responses:
+        '200':
+          description: Uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  avatar_url: { type: string, format: uri }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /me/change-password:
+    post:
+      tags: [Profile]
+      summary: Change password
+      description: Keeps the calling session signed in and revokes all other tokens.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, minLength: 8 }
+      responses:
+        '200': { description: Password changed }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /me/settings:
+    get:
+      tags: [Profile]
+      summary: Read notification preferences
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Settings' }
+    put:
+      tags: [Profile]
+      summary: Update notification preferences
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Settings' }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Settings' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ----------------------------------------------------------------- Leads
+  /leads:
+    get:
+      tags: [Leads]
+      summary: List assigned leads
+      description: Always scoped to the authenticated agent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [new, in_progress, converted, rejected] } }
+        - { in: query, name: intent, schema: { type: string, enum: [buying, selling] } }
+        - { in: query, name: q, schema: { type: string }, description: 'Matches reference, name, phone, email, location, property type' }
+        - { in: query, name: sort, schema: { type: string, enum: [newest, oldest, price_high, price_low, name_az], default: newest } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: per_page, schema: { type: integer, default: 15, maximum: 100 } }
+      responses:
+        '200':
+          description: Paginated leads
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Lead' }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '403': { $ref: '#/components/responses/AccountNotActive' }
+
+  /leads/stats:
+    get:
+      tags: [Leads]
+      summary: Dashboard counts
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Counts by status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total: { type: integer, example: 12 }
+                      new: { type: integer, example: 3 }
+                      in_progress: { type: integer, example: 5 }
+                      converted: { type: integer, example: 3 }
+                      rejected: { type: integer, example: 1 }
+        '403': { $ref: '#/components/responses/AccountNotActive' }
+
+  /leads/analytics:
+    get:
+      tags: [Leads]
+      summary: Chart data
+      description: |
+        `series` is dense — every day in the window is present, zero-filled, so
+        the chart needs no gap handling.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: range, schema: { type: string, enum: [week, fortnight, month, quarter, year], default: week } }
+      responses:
+        '200':
+          description: Series and pipeline
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  range: { type: string, example: week }
+                  series:
+                    type: array
+                    items: { $ref: '#/components/schemas/SeriesPoint' }
+                  conversions:
+                    type: array
+                    items: { $ref: '#/components/schemas/SeriesPoint' }
+                  pipeline:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      new: { type: integer }
+                      in_progress: { type: integer }
+                      converted: { type: integer }
+                      rejected: { type: integer }
+                  conversion_rate: { type: number, format: float, example: 25.0 }
+                  acceptance_rate: { type: number, format: float, example: 66.7 }
+                  avg_response_hours: { type: number, format: float, nullable: true, example: 2.0 }
+
+  /leads/{lead}:
+    get:
+      tags: [Leads]
+      summary: Lead detail
+      description: 404 if the lead is not assigned to the caller.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: lead, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Lead
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /leads/{lead}/respond:
+    post:
+      tags: [Leads]
+      summary: Accept or reject the lead
+      description: |
+        `accept` → status becomes `in_progress` and a `lead_fee` transaction is
+        recorded. `reject` → status becomes `rejected`; a reason is required.
+
+        Either way a `lead_feedback` row is stored, the transition is written to
+        `lead_status_history`, and all staff + admins are notified in-app and by
+        email (events #4/#5/#6). A lead can only be responded to once.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: lead, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [accept, reject] }
+                reason:
+                  type: string
+                  nullable: true
+                  description: Required when rejecting.
+                  enum: [not_in_service_area, not_interested, not_serious, budget_too_low, property_type_mismatch, already_working_other, other]
+                comments: { type: string, nullable: true, maxLength: 2000 }
+      responses:
+        '200':
+          description: Response recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  data: { $ref: '#/components/schemas/Lead' }
+                  feedback: { $ref: '#/components/schemas/LeadFeedback' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # --------------------------------------------------------- Notifications
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: unread, schema: { type: boolean } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: per_page, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: Paginated notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  meta:
+                    allOf:
+                      - $ref: '#/components/schemas/PaginationMeta'
+                      - type: object
+                        properties:
+                          unread_count: { type: integer }
+
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Badge count
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread_count: { type: integer, example: 4 }
+
+  /notifications/{notification}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark one read
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: notification, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Notification' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all read
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Marked read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  updated: { type: integer }
+
+  /devices:
+    post:
+      tags: [Notifications]
+      summary: Register an FCM token
+      description: Call after login and whenever the token refreshes. A token belongs to one account at a time.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, platform]
+              properties:
+                token: { type: string, maxLength: 400 }
+                platform: { type: string, enum: [android, ios, web] }
+      responses:
+        '200': { description: Registered }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /devices/{token}:
+    delete:
+      tags: [Notifications]
+      summary: Unregister an FCM token
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: token, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Unregistered }
+
+  # --------------------------------------------------------------- Content
+  /content:
+    get:
+      tags: [Content]
+      summary: List published pages
+      responses:
+        '200':
+          description: Slugs and titles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        slug: { type: string }
+                        title: { type: string }
+                        updated_at: { type: string, format: date-time }
+
+  /content/{slug}:
+    get:
+      tags: [Content]
+      summary: Get a page
+      description: Public, so Terms can be shown before signup. 404 when nothing is published — the app should fall back to its bundled copy.
+      parameters:
+        - { in: path, name: slug, required: true, schema: { type: string, enum: [about, privacy, terms, help] } }
+      responses:
+        '200':
+          description: Page content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  slug: { type: string }
+                  title: { type: string }
+                  intro: { type: string, nullable: true }
+                  sections:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        heading: { type: string }
+                        body: { type: string }
+                  updated_at: { type: string, format: date-time }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A Laravel Sanctum personal access token from login or signup.
+
+  schemas:
+    Agent:
+      type: object
+      properties:
+        id: { type: integer, example: 7 }
+        name: { type: string, example: Carlos Rodriguez }
+        email: { type: string, format: email, description: Read-only after signup }
+        phone: { type: string, nullable: true }
+        avatar_url: { type: string, format: uri }
+        role: { type: string, enum: [agent] }
+        status: { type: string, enum: [pending, active, suspended, rejected] }
+        title: { type: string, example: Senior Luxury Agent }
+        verified: { type: boolean, description: The blue check shown in the app }
+        service_areas:
+          type: array
+          items: { type: string }
+        license_number: { type: string, nullable: true }
+        license_state: { type: string, nullable: true }
+        brokerage: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        approved_at: { type: string, format: date-time, nullable: true }
+        rejected_reason: { type: string, nullable: true }
+        settings: { $ref: '#/components/schemas/Settings' }
+        created_at: { type: string, format: date-time }
+
+    Settings:
+      type: object
+      properties:
+        push_notifications: { type: boolean, default: true }
+        email_notifications: { type: boolean, default: true }
+        language: { type: string, default: en }
+        theme: { type: string, enum: [system, light, dark], default: system }
+
+    Lead:
+      type: object
+      properties:
+        id: { type: integer, example: 41 }
+        reference_id: { type: string, example: LEAD-10234 }
+        name: { type: string, example: Melad Yousef }
+        avatar_url: { type: string, nullable: true }
+        phone: { type: string, nullable: true, example: '7034169995' }
+        email: { type: string, nullable: true }
+        intent: { type: string, enum: [buying, selling] }
+        property_type: { type: string, nullable: true, example: Single Family Home }
+        price_min: { type: integer, nullable: true, example: 300000, description: Whole dollars }
+        price_max: { type: integer, nullable: true, example: 400000, description: Whole dollars }
+        location: { type: string, nullable: true }
+        timeline: { type: string, nullable: true, example: ASAP }
+        bedrooms: { type: string, nullable: true, example: '3' }
+        bathrooms: { type: string, nullable: true, example: '2' }
+        source: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        status: { type: string, enum: [new, in_progress, converted, rejected] }
+        lead_fee_cents: { type: integer, example: 25000 }
+        assigned_at: { type: string, format: date-time, nullable: true }
+        responded_at: { type: string, format: date-time, nullable: true }
+        converted_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        my_feedback:
+          type: array
+          description: Present on the detail and respond responses.
+          items: { $ref: '#/components/schemas/LeadFeedback' }
+
+    LeadFeedback:
+      type: object
+      properties:
+        id: { type: integer }
+        lead_id: { type: integer }
+        agent_id: { type: integer }
+        decision: { type: string, enum: [accept, reject] }
+        reason:
+          type: string
+          nullable: true
+          enum: [not_in_service_area, not_interested, not_serious, budget_too_low, property_type_mismatch, already_working_other, other]
+        reason_label: { type: string, nullable: true, example: Budget too low }
+        comments: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        type: { type: string, enum: [new_lead, lead_update, feedback, agent_signup, system] }
+        title: { type: string, example: New lead assigned }
+        body: { type: string }
+        lead_id: { type: integer, nullable: true, description: Deep-link target }
+        actor_id: { type: integer, nullable: true }
+        read: { type: boolean }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    SeriesPoint:
+      type: object
+      properties:
+        date: { type: string, format: date, example: '2026-08-17' }
+        count: { type: integer, example: 3 }
+
+    PaginationMeta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        per_page: { type: integer, example: 15 }
+        total: { type: integer, example: 42 }
+        last_page: { type: integer, example: 3 }
+
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+
+  responses:
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            message: The given data was invalid.
+            errors:
+              reason: ['A rejection reason is required.']
+
+    Unauthenticated:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Unauthenticated. }
+
+    AccountNotActive:
+      description: The agent account is pending, suspended, or rejected
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: string, example: account_not_active }
+              status: { type: string, enum: [pending, suspended, rejected] }
+              message: { type: string }
+          example:
+            code: account_not_active
+            status: pending
+            message: Your account is awaiting approval.
+
+    NotFound:
+      description: Not found, or not assigned to this agent
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+    TooManyRequests:
+      description: Rate limited
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
