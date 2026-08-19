@@ -73,8 +73,8 @@ jobs:
 
             composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
-            rm -rf /home/u867057961/public_html
-            ln -s /home/u867057961/motivatedhomeleads.com/public /home/u867057961/public_html
+            rm -rf /home/u867057961/domains/motivatedhomeleads.com/public_html
+            ln -s /home/u867057961/motivatedhomeleads.com/public /home/u867057961/domains/motivatedhomeleads.com/public_html
 
             php artisan config:cache
             php artisan route:cache
