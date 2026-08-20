@@ -234,34 +234,33 @@ class NotificationDispatcher
             return;
         }
 
+        $title = \Illuminate\Support\Str::limit($title, 185);
         $body = \Illuminate\Support\Str::limit($body, 495);
 
         foreach ($recipients as $recipient) {
-            Notification::create([
+            $notification = Notification::create([
                 'user_id' => $recipient->id,
                 'type' => $type,
-                'title' => \Illuminate\Support\Str::limit($title, 185),
+                'title' => $title,
                 'body' => $body,
                 'lead_id' => $lead?->id,
                 'actor_id' => $actor?->id,
                 'created_at' => now(),
             ]);
-        }
 
-        if (! $push) {
-            return;
-        }
+            if (! $push || ! $recipient->wantsPush()) {
+                continue;
+            }
 
-        $pushable = $recipients->filter(fn (User $user) => $user->wantsPush());
-
-        if ($pushable->isNotEmpty()) {
-            $this->fcm->pushToUsers($pushable, $title, $body, [
-                // `type` carries the app-facing action key it deep-links on;
-                // `notification_type` is the same enum the /notifications list
-                // returns, so either reading works.
-                'type' => $type->pushAction(),
-                'notification_type' => $type->value,
+            // Pushed per recipient rather than as one multicast, because `id`
+            // is that recipient's own notification row — the app uses it to
+            // mark the notification read when the push is tapped.
+            $this->fcm->pushToUsers([$recipient], $title, $body, [
+                'id' => $notification->id,
+                'type' => $type->value,
                 'lead_id' => $lead?->id,
+                'title' => $title,
+                'body' => $body,
                 'reference_id' => $lead?->reference_id,
             ]);
         }

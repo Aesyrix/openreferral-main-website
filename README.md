@@ -186,16 +186,25 @@ works, which is why the test suite and local development need no Firebase
 project. Tokens FCM reports as unregistered are pruned from `devices`
 automatically.
 
-The push `data` payload the app deep-links on:
+The push `data` payload, exactly as the mobile team specified it:
 
 ```json
-{ "type": "lead_assigned", "notification_type": "new_lead",
-  "lead_id": "123", "reference_id": "LEAD-10123" }
+{
+  "id": "482",
+  "type": "new_lead",
+  "lead_id": "5",
+  "title": "New lead assigned",
+  "body": "Jordan Blake — Coral Gables, FL",
+  "reference_id": "LEAD-10005"
+}
 ```
 
-`type` is the action key (`lead_assigned`, `lead_status_updated`,
-`lead_feedback`, `agent_signup`, `system`); `notification_type` is the same enum
-the `/notifications` list returns.
+`type` is the same enum the `/notifications` list returns — one of `new_lead`,
+`lead_update`, `feedback`, `system` (plus `agent_signup`, which only ever
+targets staff and admins, who have no app). `id` is the recipient's own
+`notifications` row, so the app can mark it read when the push is tapped; this
+is why pushes go out one recipient at a time rather than as a single multicast.
+`reference_id` is extra, and safe to ignore.
 
 ### Uploaded files
 

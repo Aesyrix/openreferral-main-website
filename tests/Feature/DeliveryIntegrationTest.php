@@ -136,13 +136,18 @@ class DeliveryIntegrationTest extends TestCase
             ->post("/admin/leads/{$lead->id}/assign", ['agent_id' => $agent->id])
             ->assertRedirect();
 
-        Http::assertSent(function ($request) use ($lead) {
+        // The exact data contract the mobile app deep-links on.
+        $notification = $agent->notifications()->firstOrFail();
+
+        Http::assertSent(function ($request) use ($lead, $notification) {
             $data = $request->data()['data'] ?? [];
 
             return str_contains($request->url(), 'fcm.googleapis.com')
-                && ($data['type'] ?? null) === 'lead_assigned'
-                && ($data['notification_type'] ?? null) === NotificationType::NEW_LEAD->value
+                && ($data['id'] ?? null) === (string) $notification->id
+                && ($data['type'] ?? null) === NotificationType::NEW_LEAD->value
                 && ($data['lead_id'] ?? null) === (string) $lead->id
+                && ($data['title'] ?? null) === 'New lead assigned'
+                && str_contains($data['body'] ?? '', 'Melad Yousef')
                 && ($data['reference_id'] ?? null) === $lead->reference_id;
         });
     }

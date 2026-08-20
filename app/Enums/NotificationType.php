@@ -32,22 +32,6 @@ enum NotificationType: string
         };
     }
 
-    /**
-     * The `data.type` value sent in the FCM payload, which the mobile app
-     * deep-links on. Deliberately more explicit than the in-app enum value —
-     * these are the keys the app team documented.
-     */
-    public function pushAction(): string
-    {
-        return match ($this) {
-            self::NEW_LEAD => 'lead_assigned',
-            self::LEAD_UPDATE => 'lead_status_updated',
-            self::FEEDBACK => 'lead_feedback',
-            self::AGENT_SIGNUP => 'agent_signup',
-            self::SYSTEM => 'system',
-        };
-    }
-
     public function badgeClass(): string
     {
         return match ($this) {
