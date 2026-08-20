@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\LeadStatus;
+use App\Enums\RejectionReason;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\LeadFeedbackResource;
 use App\Http\Resources\LeadResource;
@@ -86,6 +88,53 @@ class LeadController extends Controller
         ]);
     }
 
+    /**
+     * Move an already-accepted lead through the pipeline.
+     *
+     * The initial accept/reject of a `new` lead goes through /respond; this
+     * handles everything after that (in_progress → converted, or a late
+     * rejection). Staff and admin are notified of the change.
+     */
+    public function updateStatus(Request $request, int $lead): JsonResponse
+    {
+        $agent = $request->user();
+
+        // 404 when the lead does not exist at all, 403 when it belongs to
+        // someone else — the contract the mobile app expects.
+        $model = Lead::findOrFail($lead);
+
+        if ($model->assigned_to !== $agent->id) {
+            return response()->json([
+                'code' => 'lead_not_assigned',
+                'message' => 'This lead is not assigned to you.',
+            ], 403);
+        }
+
+        if ($model->status === LeadStatus::NEW) {
+            return response()->json([
+                'message' => 'Accept the lead before changing its status.',
+                'errors' => ['status' => ['Accept the lead before changing its status.']],
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'status' => ['required', Rule::in(['in_progress', 'converted', 'rejected'])],
+            'reason' => ['nullable', Rule::in(array_keys(RejectionReason::options()))],
+            'comments' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $this->workflow->agentChangeStatus(
+            $model,
+            $agent,
+            LeadStatus::from($data['status']),
+            $data['reason'] ?? null,
+            $data['comments'] ?? null,
+        );
+
+        // Same shape as GET /leads/{id} — the app re-parses it with one model.
+        return response()->json(['data' => new LeadResource($model->refresh()->load('feedback'))]);
+    }
+
     /** Accept or reject with feedback — fires events #4/#5/#6. */
     public function respond(Request $request, int $lead): JsonResponse
     {
@@ -94,7 +143,7 @@ class LeadController extends Controller
             'reason' => [
                 'nullable',
                 'required_if:decision,reject',
-                Rule::in(array_keys(\App\Enums\RejectionReason::options())),
+                Rule::in(array_keys(RejectionReason::options())),
             ],
             'comments' => ['nullable', 'string', 'max:2000'],
         ]);

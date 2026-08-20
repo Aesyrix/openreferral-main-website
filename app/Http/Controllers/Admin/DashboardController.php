@@ -10,6 +10,7 @@ use App\Models\Lead;
 use App\Models\LeadFeedback;
 use App\Models\User;
 use App\Services\AnalyticsService;
+use App\Support\MailSettings;
 use Illuminate\Contracts\View\View;
 
 /** Overview for staff and admin; revenue tiles render for admins only. */
@@ -45,6 +46,8 @@ class DashboardController extends Controller
             'recentActivity' => ActivityLog::with('actor')->orderByDesc('id')->take(10)->get(),
             'totalRevenueCents' => auth()->user()->isAdmin() ? $analytics->totalRevenueCents() : null,
             'monthRevenueCents' => auth()->user()->isAdmin() ? $analytics->revenueThisMonthCents() : null,
+            // Signup and password reset are dead in the water without email.
+            'emailIsLive' => MailSettings::isLive(),
         ]);
     }
 }

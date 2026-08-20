@@ -23,6 +23,17 @@ class Setting extends Model
         'otp_ttl_minutes' => '10',
         'otp_max_attempts' => '5',
         'otp_resend_seconds' => '45',
+
+        // Email delivery — see App\Support\MailSettings. 'env' keeps whatever
+        // .env says; an admin switches this to 'smtp' from the settings page.
+        'mail_transport' => 'env',
+        'mail_host' => '',
+        'mail_port' => '587',
+        'mail_username' => '',
+        'mail_password' => '',
+        'mail_encryption' => 'tls',
+        'mail_from_address' => '',
+        'mail_from_name' => '',
     ];
 
     public static function get(string $key, mixed $default = null): mixed

@@ -67,6 +67,7 @@ paths:
                   expires_in: { type: integer, example: 600 }
         '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/MailNotConfigured' }
 
   /auth/register/verify:
     post:
@@ -177,6 +178,7 @@ paths:
         '200':
           description: Code emailed if the address is registered
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/MailNotConfigured' }
 
   /auth/password/verify:
     post:
@@ -528,6 +530,68 @@ paths:
         '422': { $ref: '#/components/responses/ValidationError' }
 
   # --------------------------------------------------------- Notifications
+  /leads/{lead}/status:
+    post:
+      tags: [Leads]
+      summary: Move an accepted lead through the pipeline
+      description: |
+        For a lead the agent has already accepted. The first accept/reject of a
+        `new` lead goes through `/respond`; this covers everything after that —
+        marking it converted, or a late rejection if the deal falls through.
+
+        Writes `lead_status_history`, stamps `converted_at` when moving to
+        `converted` (and clears it when moving away), records a `lead_feedback`
+        row on rejection, and notifies all staff + admins.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: lead, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [in_progress, converted, rejected]
+                  description: '`new` is not accepted here — use /respond.'
+                reason:
+                  type: string
+                  nullable: true
+                  description: Optional, and only meaningful when status is `rejected`.
+                  enum: [not_in_service_area, not_interested, not_serious, budget_too_low, property_type_mismatch, already_working_other, other]
+                comments: { type: string, nullable: true, maxLength: 2000 }
+      responses:
+        '200':
+          description: The updated lead, in the same shape as GET /leads/{lead}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '403':
+          description: The lead is assigned to a different agent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: lead_not_assigned }
+                  message: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Still `new` (accept it first), or an invalid status/reason
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                message: Accept the lead before changing its status.
+                errors:
+                  status: ['Accept the lead before changing its status.']
+
   /notifications:
     get:
       tags: [Notifications]
@@ -844,6 +908,22 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+
+    MailNotConfigured:
+      description: |
+        The code could not be emailed — the server's mail transport rejected it
+        or is not configured. Nothing was sent, and no usable code was issued,
+        so the client should surface the message and let the user retry.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: string, example: mail_not_configured }
+              message: { type: string }
+          example:
+            code: mail_not_configured
+            message: We could not send the email. Please try again shortly, or contact support if it keeps happening.
 
     TooManyRequests:
       description: Rate limited

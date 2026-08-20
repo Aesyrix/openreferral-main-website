@@ -96,6 +96,11 @@ staff creates → new → assign to agent → agent accepts → in_progress → 
                                      └→ agent rejects (reason) → rejected
 ```
 
+Two API surfaces drive this from the app: `POST /leads/{id}/respond` for the
+first accept/reject of a `new` lead, and `POST /leads/{id}/status` for
+everything after that (converted, or a late rejection). Staff and admins are
+notified either way, and the dashboard can override any lead's status itself.
+
 Every transition writes `lead_status_history`; every decision writes
 `lead_feedback`; privileged actions write `activity_logs`. Accepting a lead
 records a `lead_fee` transaction, which is what the admin revenue page sums.
@@ -125,14 +130,84 @@ push (honouring `user_settings.push_notifications`), and queues an email
 Account emails (approval, rejection, suspension, password reset) ignore the
 email preference by design.
 
+### Email delivery — set up from the dashboard
+
+**Nothing is emailed until this is configured.** Agent signup and password reset
+both send a 6-digit code, so with delivery switched off nobody can complete
+signup — the code only lands in `storage/logs/laravel.log`.
+
+OTP emails are sent **inline rather than queued**, so signup works even when no
+queue worker is running, and a transport failure answers
+`503 {"code":"mail_not_configured"}` instead of falsely reporting that a code
+was sent. Every other email stays queued.
+
+An admin sets it up in the browser at **Settings → Email delivery**
+(`/admin/settings#email-delivery`) — no `.env` editing, no redeploy:
+
+1. Pick a **provider preset** (Gmail, Outlook, cPanel/Hostinger, SendGrid,
+   Mailgun, Postmark, Brevo) — it fills in host, port and encryption.
+2. Enter the SMTP username, password, and the "from" address agents will see.
+3. **Save**, then **Send a test email**. The test sends immediately rather than
+   through the queue and shows the provider's exact rejection message, so a bad
+   password or blocked port is obvious straight away.
+
+The page carries step-by-step instructions for each provider (including how to
+create a Google App Password) and a troubleshooting list for the common
+failures. Every attempt is recorded in the delivery log at the bottom of the
+page. While delivery is off, a red banner on the dashboard says so.
+
+Under the hood (`app/Support/MailSettings.php`): settings live in `app_settings`
+with the **password encrypted at rest**, and are layered over `config/mail.php`
+at boot. `mail_transport` picks the mode:
+
+| Mode | Behaviour |
+|---|---|
+| `smtp` | Use the credentials stored in the dashboard |
+| `log` | Write emails to the log, deliver nothing (development) |
+| `env` | Leave whatever `.env` says — the default |
+
+Saving also runs `queue:restart`, so a running worker picks up the new
+credentials instead of holding the old ones in memory. Half-filled SMTP falls
+back to the log rather than throwing on every send.
+
 ### Push notifications (FCM)
 
 `app/Services/FcmService.php` supports the HTTP v1 API (service-account JSON,
 preferred — it signs its own JWT, no extra package) and the legacy server key.
-Set `FCM_CREDENTIALS` or `FCM_SERVER_KEY` in `.env`. **With neither set, pushes
-are logged and skipped** — everything else still works, which is why the test
-suite and local development need no Firebase project. Tokens FCM reports as
-unregistered are pruned from `devices` automatically.
+
+Set it up at **Settings → Push notifications**: paste the Firebase
+service-account JSON and save. It is stored encrypted in `app_settings` and
+takes effect immediately; `FCM_CREDENTIALS` / `FCM_SERVER_KEY` in `.env` still
+work as a fallback. The section also carries the full Firebase setup walkthrough
+and lists which files the mobile team needs.
+
+**With neither set, pushes are logged and skipped** — everything else still
+works, which is why the test suite and local development need no Firebase
+project. Tokens FCM reports as unregistered are pruned from `devices`
+automatically.
+
+The push `data` payload the app deep-links on:
+
+```json
+{ "type": "lead_assigned", "notification_type": "new_lead",
+  "lead_id": "123", "reference_id": "LEAD-10123" }
+```
+
+`type` is the action key (`lead_assigned`, `lead_status_updated`,
+`lead_feedback`, `agent_signup`, `system`); `notification_type` is the same enum
+the `/notifications` list returns.
+
+### Uploaded files
+
+Avatars are stored on the `public` disk and served from `/storage/…`. That disk
+has `'serve' => true`, so Laravel streams the files through PHP when
+`public/storage` is missing — the usual cause of avatars 404ing on a server
+where `storage:link` could not create a usable symlink. Run `php artisan
+storage:link` anyway for the faster path; **Settings → Uploaded files** reports
+whether the symlink is present, whether storage is writable, and how many
+avatars exist.
+
+The private `local` disk is deliberately **not** served over HTTP.
 
 ---
 
@@ -172,11 +247,13 @@ legacy_backup/           Pre-existing code from an older schema (see below)
 php artisan test
 ```
 
-69 feature tests cover the OTP signup flow, login and account-state gating,
+107 feature tests cover the OTP signup flow, login and account-state gating,
 password reset, profile and avatar handling, lead scoping and filters, the
 accept/reject workflow with its notification fan-out and fee billing, the
 approval workflow, dashboard access control, staff management, content
-publishing, analytics maths, and revenue totals.
+publishing, analytics maths, revenue totals, the SMTP setup flow (encryption at
+rest, transport switching, test-send error reporting), agent-driven status
+changes, avatar serving over HTTP, and the FCM payload contract.
 
 Tests run against a **separate MySQL database** (`openreferral_test`, set in
 `phpunit.xml`) so development data is never touched. Create it once:
@@ -207,5 +284,6 @@ is not a drop-in substitute for the test database.
   Verification is toggled from the agent detail page.
 - **Timestamps are UTC** end to end. The dashboard prints raw UTC; add a display
   timezone if the team wants local times.
-#   o p e n r e f e r r a l  
+#   o p e n r e f e r r a l 
+ 
  

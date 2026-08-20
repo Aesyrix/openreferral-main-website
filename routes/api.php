@@ -64,5 +64,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('analytics', [LeadController::class, 'analytics']);
         Route::get('{lead}', [LeadController::class, 'show'])->whereNumber('lead');
         Route::post('{lead}/respond', [LeadController::class, 'respond'])->whereNumber('lead');
+        Route::post('{lead}/status', [LeadController::class, 'updateStatus'])->whereNumber('lead');
     });
 });

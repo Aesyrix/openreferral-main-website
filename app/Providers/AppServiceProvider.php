@@ -6,6 +6,7 @@ use App\Models\Lead;
 use App\Models\User;
 use App\Policies\LeadPolicy;
 use App\Policies\UserPolicy;
+use App\Support\MailSettings;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
@@ -21,6 +22,10 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Mail credentials are managed from the admin dashboard, so they have to
+        // be layered over config/mail.php before anything sends.
+        MailSettings::apply();
+
         $this->registerRateLimiters();
         $this->registerGates();
 

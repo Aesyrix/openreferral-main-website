@@ -186,6 +186,76 @@ class LeadWorkflow
         return $feedback;
     }
 
+    /**
+     * The agent moving their own lead through the pipeline after they accepted
+     * it — in_progress → converted, or rejected if the deal falls through.
+     *
+     * The initial accept/reject of a `new` lead goes through respond(); this is
+     * for everything after that. Staff and admin are notified of the change.
+     */
+    public function agentChangeStatus(
+        Lead $lead,
+        User $agent,
+        LeadStatus $to,
+        ?string $reason = null,
+        ?string $comments = null,
+    ): Lead {
+        if ($lead->assigned_to !== $agent->id) {
+            throw ValidationException::withMessages(['status' => ['This lead is not assigned to you.']]);
+        }
+
+        if ($lead->status === LeadStatus::NEW) {
+            throw ValidationException::withMessages([
+                'status' => ['Accept the lead before changing its status.'],
+            ]);
+        }
+
+        $from = $lead->status;
+
+        if ($from === $to && blank($comments)) {
+            return $lead; // Nothing changed — don't spam the history or staff.
+        }
+
+        DB::transaction(function () use ($lead, $agent, $from, $to, $reason, $comments) {
+            $lead->update([
+                'status' => $to,
+                'converted_at' => $to === LeadStatus::CONVERTED ? now() : null,
+            ]);
+
+            if ($from !== $to) {
+                $this->recordHistory($lead, $from, $to, $agent);
+            }
+
+            // A late rejection still belongs in lead_feedback — that is where the
+            // dashboard and the rejection-reason analytics read from.
+            if ($to === LeadStatus::REJECTED) {
+                LeadFeedback::create([
+                    'lead_id' => $lead->id,
+                    'agent_id' => $agent->id,
+                    'decision' => 'reject',
+                    'reason' => $reason,
+                    'comments' => $comments,
+                    'created_at' => now(),
+                ]);
+            }
+        });
+
+        $lead->refresh();
+
+        $this->notifications->agentUpdatedLeadStatus($lead, $agent, $to, $comments);
+
+        ActivityLogger::lead('lead.status_changed', $lead->id, [
+            'from' => $from?->value,
+            'to' => $to->value,
+            'by' => 'agent',
+            'agent_id' => $agent->id,
+            'reason' => $reason,
+            'comments' => $comments,
+        ], $agent);
+
+        return $lead;
+    }
+
     /** Staff/admin status change — most importantly marking a lead converted (event #7). */
     public function changeStatus(Lead $lead, LeadStatus $to, ?User $actor = null): Lead
     {

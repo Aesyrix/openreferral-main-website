@@ -59,6 +59,8 @@ jobs:
             --exclude 'storage/framework/sessions/*' \
             --exclude 'storage/framework/views/*' \
             --exclude 'bootstrap/cache/*' \
+            --exclude 'storage/app' \
+            --exclude 'public/storage' \
             ./ $SSH_USER@$SSH_HOST:/home/u867057961/motivatedhomeleads.com/
 
       - name: Deploy to production
@@ -76,10 +78,16 @@ jobs:
             rm -rf /home/u867057961/domains/motivatedhomeleads.com/public_html
             ln -s /home/u867057961/motivatedhomeleads.com/public /home/u867057961/domains/motivatedhomeleads.com/public_html
 
+            php artisan migrate --force
+
+            # Recreate public/storage -> storage/app/public. rsync --delete
+            # strips this symlink on every deploy, which is what made uploaded
+            # avatars 404 in the app and the dashboard.
+            php artisan storage:link --force
+
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
-            php artisan migrate --force
 
             chmod -R 775 storage bootstrap/cache
 

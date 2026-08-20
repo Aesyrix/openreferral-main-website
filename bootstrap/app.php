@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\MailDeliveryException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -27,6 +28,18 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($request->expectsJson() || $request->is('api/*')) {
                 return response()->json(['message' => 'Unauthenticated.'], 401);
             }
+        });
+
+        // An OTP that could not be sent must never look like a success.
+        $exceptions->render(function (MailDeliveryException $e, Request $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'code' => 'mail_not_configured',
+                    'message' => $e->getMessage(),
+                ], 503);
+            }
+
+            return back()->withInput()->with('error', $e->getMessage());
         });
 
         $exceptions->render(function (NotFoundHttpException $e, Request $request) {

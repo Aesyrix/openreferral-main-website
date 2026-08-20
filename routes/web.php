@@ -112,6 +112,9 @@ Route::middleware('auth')->group(function () {
 
             Route::get('settings', [SettingController::class, 'index'])->name('settings.index');
             Route::post('settings', [SettingController::class, 'update'])->name('settings.update');
+            Route::post('settings/mail', [SettingController::class, 'updateMail'])->name('settings.mail');
+            Route::post('settings/test-email', [SettingController::class, 'sendTestEmail'])->name('settings.test-email');
+            Route::post('settings/push', [SettingController::class, 'updatePush'])->name('settings.push');
 
             Route::get('audit', [ActivityLogController::class, 'index'])->name('audit.index');
         });

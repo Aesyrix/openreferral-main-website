@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\LeadStatus;
 use App\Enums\NotificationType;
 use App\Mail\AgentAccountStatusMail;
 use App\Mail\AgentApprovedMail;
@@ -148,6 +149,26 @@ class NotificationDispatcher
         );
     }
 
+    /**
+     * The agent moved their own lead through the pipeline — the mirror of #7:
+     * staff and admin are the ones who need to know.
+     */
+    public function agentUpdatedLeadStatus(Lead $lead, User $agent, LeadStatus $to, ?string $comments = null): void
+    {
+        $detail = filled($comments)
+            ? ' Comments: "'.\Illuminate\Support\Str::limit($comments, 160).'"'
+            : '';
+
+        $this->fanOut(
+            $this->staffAndAdmins(),
+            NotificationType::LEAD_UPDATE,
+            "Lead {$lead->reference_id} marked {$to->label()}",
+            "{$agent->name} moved {$lead->reference_id} ({$lead->name}) to {$to->label()}.{$detail}",
+            lead: $lead,
+            actor: $agent,
+        );
+    }
+
     /** Any other status change staff make on an agent's lead. */
     public function leadStatusChanged(Lead $lead, User $agent, string $status, ?User $actor = null): void
     {
@@ -235,7 +256,11 @@ class NotificationDispatcher
 
         if ($pushable->isNotEmpty()) {
             $this->fcm->pushToUsers($pushable, $title, $body, [
-                'type' => $type->value,
+                // `type` carries the app-facing action key it deep-links on;
+                // `notification_type` is the same enum the /notifications list
+                // returns, so either reading works.
+                'type' => $type->pushAction(),
+                'notification_type' => $type->value,
                 'lead_id' => $lead?->id,
                 'reference_id' => $lead?->reference_id,
             ]);

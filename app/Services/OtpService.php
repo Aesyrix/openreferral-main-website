@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\MailDeliveryException;
 use App\Mail\OtpCodeMail;
 use App\Models\Setting;
 use App\Models\VerificationCode;
@@ -61,7 +62,7 @@ class OtpService
 
         $code = (string) random_int(100000, 999999);
 
-        VerificationCode::create([
+        $record = VerificationCode::create([
             'email' => $email,
             'code_hash' => Hash::make($code),
             'purpose' => $purpose,
@@ -70,11 +71,21 @@ class OtpService
             'created_at' => now(),
         ]);
 
-        $this->mailer->send(
-            $email,
-            new OtpCodeMail($code, $purpose, $this->ttlMinutes(), $name),
-            $purpose === VerificationCode::PURPOSE_SIGNUP ? 'otp_signup' : 'otp_password_reset'
-        );
+        try {
+            // Sent inline, not queued: the user is sitting on the OTP screen, and
+            // a queue worker that isn't running would strand them there silently.
+            $this->mailer->sendNow(
+                $email,
+                new OtpCodeMail($code, $purpose, $this->ttlMinutes(), $name),
+                $purpose === VerificationCode::PURPOSE_SIGNUP ? 'otp_signup' : 'otp_password_reset'
+            );
+        } catch (\Throwable $e) {
+            // Never leave a live code behind for an email that never went out,
+            // and never report success for a send that failed.
+            $record->update(['consumed_at' => now()]);
+
+            throw new MailDeliveryException($e->getMessage(), $e);
+        }
 
         return [
             'resend_in' => $this->resendSeconds(),

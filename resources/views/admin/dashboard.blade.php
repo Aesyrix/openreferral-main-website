@@ -8,6 +8,21 @@
         </x-slot:actions>
     </x-ui.page-header>
 
+    @unless($emailIsLive)
+        <div style="background-color: #FEE2E2; border: 1px solid #FCA5A5; color: #991B1B; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; line-height: 1.7; display: flex; justify-content: space-between; gap: 16px; align-items: center; flex-wrap: wrap;">
+            <div>
+                <strong>⚠ Email delivery is switched off — new agents cannot sign up.</strong><br>
+                Signup and password reset both send a 6-digit code by email. Right now those codes are only
+                written to the log file, so nobody receives them.
+            </div>
+            @can('manage-settings')
+                <a href="{{ route('admin.settings.index') }}#email-delivery" class="or-btn or-btn-danger" style="white-space: nowrap;">
+                    Set up email
+                </a>
+            @endcan
+        </div>
+    @endunless
+
     {{-- KPI row --}}
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px;">
         <x-ui.stat label="Total Leads" :value="number_format($counts['total'])"

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Device;
+use App\Support\PushSettings;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -26,7 +27,13 @@ class FcmService
 
     public function isConfigured(): bool
     {
-        return $this->serviceAccount() !== null || filled(config('services.fcm.server_key'));
+        return $this->serviceAccount() !== null || filled($this->serverKey());
+    }
+
+    /** Dashboard-stored key first, then the env fallback. */
+    private function serverKey(): ?string
+    {
+        return PushSettings::serverKey() ?: config('services.fcm.server_key');
     }
 
     /**
@@ -192,6 +199,11 @@ class FcmService
     /** @return array{project_id:string,client_email:string,private_key:string}|null */
     private function serviceAccount(): ?array
     {
+        // Credentials pasted into the admin dashboard win over the env file.
+        if ($fromSettings = PushSettings::serviceAccount()) {
+            return $fromSettings;
+        }
+
         $path = config('services.fcm.credentials');
 
         if (blank($path)) {
@@ -234,7 +246,7 @@ class FcmService
         foreach (array_chunk($tokens, 500) as $chunk) {
             try {
                 $response = Http::withHeaders([
-                    'Authorization' => 'key='.config('services.fcm.server_key'),
+                    'Authorization' => 'key='.$this->serverKey(),
                 ])->timeout(10)->post(self::LEGACY_ENDPOINT, [
                     'registration_ids' => $chunk,
                     'priority' => 'high',

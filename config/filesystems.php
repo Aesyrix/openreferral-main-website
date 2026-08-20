@@ -33,7 +33,10 @@ return [
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
-            'serve' => true,
+            // Private files are never served over HTTP. Leaving this on would
+            // expose storage/app/private at /storage/* when the public symlink
+            // is missing, and shadow the public disk's own route.
+            'serve' => false,
             'throw' => false,
             'report' => false,
         ],
@@ -43,6 +46,11 @@ return [
             'root' => storage_path('app/public'),
             'url' => env('APP_URL').'/storage',
             'visibility' => 'public',
+            // Registers a GET /storage/{path} route that streams these files.
+            // Apache/nginx serve them directly when public/storage exists; this
+            // is the fallback for deployments where the symlink cannot be made
+            // (e.g. public_html is itself a symlink), which otherwise 404s.
+            'serve' => true,
             'throw' => false,
             'report' => false,
         ],
