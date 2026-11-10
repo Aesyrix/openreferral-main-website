@@ -66,11 +66,9 @@
                 </form>
             @endif
 
-            <form method="POST" action="{{ route('admin.agents.destroy', $agent->id) }}"
-                  onsubmit="return confirm('Remove {{ $agent->name }}? This revokes access and returns their open leads. History is kept.')">
-                @csrf @method('DELETE')
-                <button class="or-btn or-btn-danger">Remove</button>
-            </form>
+            <button type="button" class="or-btn or-btn-danger" onclick="document.getElementById('danger-zone').scrollIntoView({behavior:'smooth'})">
+                Delete permanently
+            </button>
         </div>
     </div>
 
@@ -197,5 +195,66 @@
             </div>
             <div style="padding: 14px 16px;">{{ $leads->links() }}</div>
         @endif
+    </div>
+
+    {{-- ===================================================== Danger zone --}}
+    <div id="danger-zone" class="or-card" style="margin-top: 22px; border: 1px solid #FCA5A5; border-left: 4px solid var(--or-danger); background-color: #FFFBFB;">
+        <h2 style="font-size: 15px; font-weight: 700; margin: 0 0 4px; color: #991B1B;">Delete permanently</h2>
+        <p style="font-size: 13px; color: var(--or-slate); margin: 0 0 14px; line-height: 1.7;">
+            Removes {{ $agent->name }} from the database for good. This cannot be undone — there is no
+            restore. If you only want to stop them receiving leads, <strong>suspend</strong> them instead.
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 16px;">
+            <div style="padding: 12px 14px; background-color: #FEE2E2; border-radius: 8px;">
+                <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #991B1B; margin-bottom: 6px;">
+                    Deleted with them
+                </div>
+                <ul style="margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.8; color: #7F1D1D;">
+                    <li>Login, password and API tokens</li>
+                    <li>Profile, licence and service areas</li>
+                    <li>{{ $impact['devices'] }} registered device(s)</li>
+                    <li>{{ number_format($impact['notifications']) }} notification(s) in their inbox</li>
+                </ul>
+            </div>
+
+            <div style="padding: 12px 14px; background-color: #DCFCE7; border-radius: 8px;">
+                <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #15803D; margin-bottom: 6px;">
+                    Kept (person detached)
+                </div>
+                <ul style="margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.8; color: #14532D;">
+                    <li>{{ number_format($impact['transactions']) }} transaction(s) — ${{ number_format($impact['revenue_cents'] / 100, 2) }} revenue</li>
+                    <li>{{ number_format($impact['feedback']) }} feedback record(s)</li>
+                    <li>{{ number_format($impact['leads_total']) }} lead(s) — history intact</li>
+                    <li>Audit log entries</li>
+                </ul>
+            </div>
+        </div>
+
+        @if($impact['leads_unassigned'] > 0)
+            <div style="padding: 12px 14px; background-color: #FEF3C7; border-radius: 8px; font-size: 13px; color: #92400E; margin-bottom: 16px; line-height: 1.6;">
+                <strong>{{ $impact['leads_unassigned'] }} open lead(s)</strong> will go back to the unassigned pool
+                for you to route to someone else.
+            </div>
+        @endif
+
+        <form method="POST" action="{{ route('admin.agents.destroy', $agent->id) }}"
+              onsubmit="return this.confirm_name.value.trim() === @js($agent->name)
+                        || (alert('Type the agent name exactly to confirm.') , false)">
+            @csrf @method('DELETE')
+
+            <label for="confirm_name" style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 5px;">
+                Type <code style="background-color: #FEE2E2; padding: 2px 6px; border-radius: 4px;">{{ $agent->name }}</code> to confirm
+            </label>
+
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                <input id="confirm_name" name="confirm_name" type="text" autocomplete="off" required
+                       placeholder="{{ $agent->name }}"
+                       style="flex: 1; min-width: 240px; padding: 9px 12px; border: 1px solid #CBD5E1; border-radius: 8px; font-size: 14px;">
+                <button type="submit" class="or-btn or-btn-danger" style="padding: 10px 22px;">
+                    Delete {{ $agent->name }} permanently
+                </button>
+            </div>
+        </form>
     </div>
 </x-layouts.app>

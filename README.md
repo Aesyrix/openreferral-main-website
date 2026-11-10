@@ -82,12 +82,31 @@ Enforced by `role` middleware on the route groups plus policies and gates in
 
 ### Account lifecycle
 
-`pending → active → suspended → active`, or `pending → rejected`; removal is a
-soft delete. Agents sign up as **pending**: they can log in and edit their
+`pending → active → suspended → active`, or `pending → rejected`. Agents sign up as **pending**: they can log in and edit their
 profile, but every `/api/leads` call returns
 `403 {"code":"account_not_active","status":"pending"}` until staff approve them.
 Suspending, rejecting, or removing an agent revokes their tokens and devices and
 returns their open leads to the unassigned pool.
+
+**Deleting is permanent** (`app/Services/UserEraser.php`). The row leaves the
+`users` table — there is no soft-deleted copy to restore — and everything
+personal goes with it: profile, service areas, settings, devices, API tokens and
+their notification inbox. Business records stay, with the person detached:
+
+| Record | What happens |
+|---|---|
+| Leads | Kept. Open ones return to the unassigned pool |
+| Transactions | Kept, `agent_id` nulled — **revenue totals do not move** |
+| Lead feedback | Kept, so rejection-reason analytics keep their history |
+| Assignment + status history | Kept |
+| Activity log | Kept, including a `user.deleted_permanently` entry |
+
+Those three tables originally cascaded, so erasing an agent would have wiped
+their revenue and analytics too; migration
+`2026_08_21_000001_preserve_business_records_on_user_delete` switches them to
+`ON DELETE SET NULL`. Deleting an agent asks the admin to type their name, and
+the confirmation panel lists exactly what will be destroyed and what will
+survive. To merely stop someone working, **suspend** them instead.
 
 ### Lead lifecycle
 
@@ -256,7 +275,7 @@ legacy_backup/           Pre-existing code from an older schema (see below)
 php artisan test
 ```
 
-107 feature tests cover the OTP signup flow, login and account-state gating,
+114 feature tests cover the OTP signup flow, login and account-state gating,
 password reset, profile and avatar handling, lead scoping and filters, the
 accept/reject workflow with its notification fan-out and fee billing, the
 approval workflow, dashboard access control, staff management, content

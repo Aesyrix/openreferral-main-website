@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Mail\StaffInviteMail;
 use App\Models\User;
 use App\Models\UserSetting;
+use App\Services\UserEraser;
 use App\Support\ActivityLogger;
 use App\Support\Mailer;
 use Illuminate\Contracts\View\View;
@@ -163,7 +164,8 @@ class StaffController extends Controller
         return back()->with('success', "{$member->name} reactivated.");
     }
 
-    public function destroy(int $id): RedirectResponse
+    /** Permanent deletion — the row leaves the users table for good. */
+    public function destroy(int $id, UserEraser $eraser): RedirectResponse
     {
         $member = $this->findStaff($id);
 
@@ -171,12 +173,11 @@ class StaffController extends Controller
 
         $name = $member->name;
 
-        $member->tokens()->delete();
-        $member->delete();
+        $eraser->erase($member, auth()->user());
 
-        ActivityLogger::user('staff.removed', $member->id);
-
-        return redirect()->route('admin.staff.index')->with('success', "{$name} removed.");
+        return redirect()
+            ->route('admin.staff.index')
+            ->with('success', "{$name} deleted permanently. Leads they created are unchanged.");
     }
 
     private function findStaff(int $id): User

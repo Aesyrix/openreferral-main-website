@@ -59,9 +59,9 @@
 
                                     @if(! ($member->isAdmin() && $adminCount <= 1))
                                         <form method="POST" action="{{ route('admin.staff.destroy', $member->id) }}" style="display: inline;"
-                                              onsubmit="return confirm('Remove {{ $member->name }}?')">
+                                              onsubmit="return confirm('Permanently delete {{ $member->name }}? This cannot be undone. Leads they created stay, attributed to nobody.')">
                                             @csrf @method('DELETE')
-                                            <button class="or-btn or-btn-danger" style="padding: 5px 10px; font-size: 12px;">Remove</button>
+                                            <button class="or-btn or-btn-danger" style="padding: 5px 10px; font-size: 12px;">Delete</button>
                                         </form>
                                     @endif
                                 @endif

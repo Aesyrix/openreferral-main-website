@@ -62,11 +62,11 @@ class StaffAndAnalyticsTest extends TestCase
         // A second admin makes the first removable again.
         $secondAdmin = User::factory()->admin()->create();
         $this->actingAs($admin)->delete("/admin/staff/{$secondAdmin->id}")->assertRedirect();
-        $this->assertSoftDeleted('users', ['id' => $secondAdmin->id]);
+        $this->assertDatabaseMissing('users', ['id' => $secondAdmin->id]);
 
         // Staff are removable regardless.
         $this->actingAs($admin)->delete("/admin/staff/{$other->id}")->assertRedirect();
-        $this->assertSoftDeleted('users', ['id' => $other->id]);
+        $this->assertDatabaseMissing('users', ['id' => $other->id]);
     }
 
     public function test_staff_cannot_create_staff(): void

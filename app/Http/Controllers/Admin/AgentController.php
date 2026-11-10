@@ -77,6 +77,9 @@ class AgentController extends Controller
                 ->take(20)
                 ->get(),
             'revenueCents' => $agent->transactions()->where('status', 'completed')->sum('amount_cents'),
+            // Shown on the delete confirmation so the admin sees the blast
+            // radius before erasing anyone.
+            'impact' => app(\App\Services\UserEraser::class)->impact($agent),
         ]);
     }
 
@@ -120,19 +123,36 @@ class AgentController extends Controller
         return back()->with('success', "{$agent->name} reactivated.");
     }
 
-    public function destroy(int $id): RedirectResponse
+    /**
+     * Permanent deletion. Irreversible, so the admin has to type the agent's
+     * name — checked here and not only in the browser.
+     */
+    public function destroy(Request $request, int $id): RedirectResponse
     {
         $agent = $this->findAgent($id);
 
         $this->authorize('delete', $agent);
 
+        $request->validate(
+            ['confirm_name' => ['required', 'string']],
+            ['confirm_name.required' => "Type the agent's name to confirm deletion."]
+        );
+
+        if (trim($request->input('confirm_name')) !== $agent->name) {
+            return back()->with('error', 'The name did not match, so nothing was deleted.');
+        }
+
         $name = $agent->name;
 
-        $this->accounts->remove($agent, auth()->user());
+        $impact = $this->accounts->remove($agent, auth()->user());
+
+        $kept = $impact['transactions'] > 0
+            ? " Their {$impact['transactions']} transaction(s) were kept for reporting."
+            : '';
 
         return redirect()
             ->route('admin.agents.index')
-            ->with('success', "{$name} removed. Their history is retained for reporting.");
+            ->with('success', "{$name} deleted permanently.{$kept}");
     }
 
     /** Toggle the blue-check shown in the app. */

@@ -96,17 +96,20 @@ class AgentApprovalTest extends TestCase
         $this->assertSame(UserStatus::ACTIVE, $agent->fresh()->status);
     }
 
-    public function test_removing_an_agent_soft_deletes_them(): void
+    public function test_deleting_an_agent_removes_the_row_from_the_database(): void
     {
         Mail::fake();
 
         $admin = User::factory()->admin()->create();
         $agent = User::factory()->agent()->create();
 
-        $this->actingAs($admin)->delete("/admin/agents/{$agent->id}")
+        $this->actingAs($admin)
+            ->delete("/admin/agents/{$agent->id}", ['confirm_name' => $agent->name])
             ->assertRedirect(route('admin.agents.index'));
 
-        $this->assertSoftDeleted('users', ['id' => $agent->id]);
+        // Gone for good, not soft-deleted: nothing is left even with trashed.
+        $this->assertDatabaseMissing('users', ['id' => $agent->id]);
+        $this->assertSame(0, User::withTrashed()->where('id', $agent->id)->count());
     }
 
     public function test_a_suspended_agent_cannot_be_assigned_a_lead(): void

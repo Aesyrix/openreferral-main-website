@@ -127,22 +127,19 @@ class AgentAccountService
     }
 
     /** Soft-delete: revoke access, release their open leads, keep history. */
-    public function remove(User $agent, User $actor): void
+    /**
+     * Permanently delete the agent. The farewell email goes out first, while
+     * the account still exists to send to.
+     *
+     * @return array the impact snapshot from UserEraser
+     */
+    public function remove(User $agent, User $actor): array
     {
         $this->assertAgent($agent);
 
         $this->notifications->agentAccountStatusChanged($agent, 'removed', $actor);
 
-        DB::transaction(function () use ($agent, $actor) {
-            $agent->tokens()->delete();
-            $agent->devices()->delete();
-
-            $this->releaseOpenLeads($agent, $actor);
-
-            $agent->delete();
-        });
-
-        ActivityLogger::user('agent.removed', $agent->id, [], $actor);
+        return app(UserEraser::class)->erase($agent, $actor);
     }
 
     /**
